@@ -36,7 +36,7 @@ remove:
 
 livetest: xlunch
 	./extra/gentriesquick > /tmp/xlunch-tmp.dsv
-	./xlunch -g extra/wp.jpg -f "extra/OpenSans-Regular.ttf/10" -i /tmp/xlunch-tmp.dsv -b 140 --iconpadding 20 --textpadding 10 --paddingswap --leastmargin 10 --scroll || true
+	./xlunch -g extra/wp.jpg -f "extra/OpenSans-Regular.ttf/10" -i /tmp/xlunch-tmp.dsv -b 140 --iconpadding 20 --textpadding 10 --paddingswap --leastmargin 10 || true
 	rm -f /tmp/xlunch-tmp.dsv
 
 test: xlunch

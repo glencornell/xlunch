@@ -128,6 +128,16 @@ enum exit_code {
     EXTERNALERROR
 };
 
+typedef enum {
+  text_left_justified,
+  text_center_justified,
+  text_right_justified
+} text_justification;
+
+#ifndef MAX
+#define MAX(x,y) ((x)>(y)?(x):(y))
+#endif
+
 static struct option long_options[] =
     {
         {"tc",                    required_argument, 0, 1009},
@@ -288,6 +298,77 @@ Imlib_Image highlight = NULL;
 /* image variable */
 Imlib_Image image = NULL;
 
+// Forward declarations:
+Imlib_Font load_font();
+int get_title_font_height(Imlib_Font font);
+
+// get the extents of the text, like imlib_get_text_size() but justify
+// multi-line strings delimited with newline characters ('\n'). Note
+// that if text_justification is text_left_justified and there are no
+// newline characters in the string, then this is the same behavior as
+// imlib_get_text_size().
+void imlib_get_text_size_multiline(const char *text,
+                                   int *width_return,
+                                   int *height_return) {
+  char *token, *save, *str;
+  int text_w, text_h;
+  char *text2 = strdup(text);
+  *width_return = 0;
+  *height_return = 0;
+  if(text2) {
+    for (str = text2; ; str = NULL) {
+      if ((token = strtok_r(str, "\n", &save)) == NULL)
+        break;
+      imlib_get_text_size(token, &text_w, &text_h); 
+      *height_return += text_h;
+      *width_return = MAX(*width_return, text_w);
+    }
+    free(text2);
+  } else {
+    perror("malloc()");
+  }
+}
+
+// Draw text, just like imlib_text_draw, but justify the text and
+// interpret newline characters into multiple line strings.  If the
+// text is left justified, the x,y point is the upper left corner of
+// the text string.  If right justified, (x,y) represents the
+// top-right hand corner.  finally, if the text is center justified,
+// then (x,y) is the top center location of the string.
+void imlib_text_draw_multiline(int x, int y, char *text, text_justification justified) {
+  char *token, *save, *str;
+  int text_w, text_h;
+  int line_x = x;
+  int line_y = y;
+  int line_w, line_h;
+  char *text2 = strdup(text);
+
+  if (text2) {
+    imlib_get_text_size_multiline(text2, &text_w, &text_h);
+    for (str = text2; ; str = NULL) {
+      if ((token = strtok_r(str, "\n", &save)) == NULL)
+        break;
+      imlib_get_text_size(token, &line_w, &line_h);
+      switch (justified) {
+      case text_left_justified:
+        break;
+      case text_right_justified:
+        line_x = x + (text_w - line_w);
+        break;
+      case text_center_justified:
+        line_x = x - ((text_w - line_w) / 2);
+        break;
+      }
+      imlib_text_draw(line_x, line_y, token); 
+      line_y += line_h;
+    }
+    free(text2);
+  } else {
+    perror("malloc()");
+  }
+}
+
+
 void calculate_percentage(int maxvalue, percentable_t* percentable)
 {
     if(percentable->percent != -1) {
@@ -298,6 +379,13 @@ void calculate_percentage(int maxvalue, percentable_t* percentable)
 void recalc_cells()
 {
     int margined_cell_width, margined_cell_height;
+    int max_title_height = 0;
+    Imlib_Font font = load_font();
+    if (font && !no_title) {
+      max_title_height = get_title_font_height(font);
+      /* free the font */
+      imlib_free_font();
+    }
 
     if (text_after){
         cell_width=icon_size+icon_padding*2;
@@ -308,9 +396,9 @@ void recalc_cells()
             ucolumns = 1;
     } else {
         cell_width=icon_size+icon_padding*2;
-        cell_height=icon_size+icon_v_padding*2+font_height+text_padding;
+        cell_height=icon_size+icon_v_padding*2+max_title_height+text_padding;
         margined_cell_width=icon_size+icon_padding*2+least_margin;
-        margined_cell_height=icon_size+icon_v_padding*2+font_height+text_padding+least_v_margin;
+        margined_cell_height=icon_size+icon_v_padding*2+max_title_height+text_padding+least_v_margin;
     }
 
     border = screen_width/10;
@@ -1177,8 +1265,15 @@ int parse_entries()
             if(b != ' ' && leading_space > 0) leading_space = -leading_space;
             switch(parsing){
                 case 0:
-                    if (leading_space <= 0)
+                    if (leading_space <= 0) {
+                        if (((position+leading_space) > 0) &&
+                            (current_entry->title[position+leading_space - 1] == '\\') &&
+                            (b == 'n')) {
+                          b = '\n';
+                          position = position - 1;
+                        }
                         current_entry->title[position+leading_space] = b;
+                    }
                     break;
                 case 1:
                     current_entry->icon[position] = b;
@@ -1310,6 +1405,23 @@ int get_font_height(Imlib_Font font){
     imlib_context_set_font(font);
     // maximum font descent is relative to baseline (ie. negative)
     int height = imlib_get_maximum_font_ascent() - imlib_get_maximum_font_descent();
+    imlib_free_font();
+    return height;
+}
+
+int get_title_font_height(Imlib_Font font){
+    node_t * current = entries;
+    int height;
+    imlib_context_set_font(font);
+    // maximum font descent is relative to baseline (ie. negative)
+    height = imlib_get_maximum_font_ascent() - imlib_get_maximum_font_descent();
+    // Iterate through titles to see the maximum height 
+    while (current != NULL) {
+        int text_w, text_h;
+        imlib_get_text_size_multiline(current->title, &text_w, &text_h);
+        height = MAX(height, text_h);
+        current = current->next;
+    }
     imlib_free_font();
     return height;
 }
@@ -1447,12 +1559,12 @@ void update_background_images()
 
 void draw_text_with_shadow(int posx, int posy, char * text, color_t color) {
     imlib_context_set_color(shadow_color.r, shadow_color.g, shadow_color.b, shadow_color.a);
-    imlib_text_draw(posx +1, posy +1, text);
-    imlib_text_draw(posx +1, posy +2, text);
-    imlib_text_draw(posx +2, posy +2, text);
+    imlib_text_draw_multiline(posx +1, posy +1, text, text_left_justified);
+    imlib_text_draw_multiline(posx +1, posy +2, text, text_left_justified);
+    imlib_text_draw_multiline(posx +2, posy +2, text, text_left_justified);
 
     imlib_context_set_color(color.r, color.g, color.b, color.a);
-    imlib_text_draw(posx, posy, text);
+    imlib_text_draw_multiline(posx, posy, text, text_left_justified);
 }
 
 void handle_option(int c, char *optarg);
@@ -2394,7 +2506,7 @@ void renderEntry(Imlib_Image buffer, char title[256], node_t * current, Cursor *
             strncpyutf8(title,current->title,sz);
             if(sz != osz)
                 strcat(title,"..");
-            imlib_get_text_size(title, &text_w, &text_h);
+            imlib_get_text_size_multiline(title, &text_w, &text_h);
             sz--;
         } while(text_w > cell_width-(text_after ? (icon_size != 0 ? icon_padding*2 : icon_padding) + icon_size + text_padding : 2*text_padding) && sz>0);
 
